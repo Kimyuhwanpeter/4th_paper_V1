@@ -3,17 +3,17 @@ import tensorflow as tf
 
 l2 = tf.keras.regularizers.l2(0.000002)
 
-Transpose_conv1 = tf.keras.layers.Conv2DTranspose(filters=128, kernel_size=3, strides=2,
+Transpose_conv1 = tf.keras.layers.Conv2DTranspose(filters=64, kernel_size=3, strides=2,
                                                   padding="same", use_bias=False, kernel_regularizer=l2)
 
-Transpose_conv2 = tf.keras.layers.Conv2DTranspose(filters=64, kernel_size=3, strides=2,
+Transpose_conv2 = tf.keras.layers.Conv2DTranspose(filters=32, kernel_size=3, strides=2,
                                                   padding="same", use_bias=False, kernel_regularizer=l2)
 
-Dense_1_1 = tf.keras.layers.Dense(128 // 2, kernel_regularizer=l2)
-Dense_1_2 = tf.keras.layers.Dense(128, kernel_regularizer=l2)
+Dense_1_1 = tf.keras.layers.Dense(64 // 2, kernel_regularizer=l2)
+Dense_1_2 = tf.keras.layers.Dense(64, kernel_regularizer=l2)
 
-Dense_2_1 = tf.keras.layers.Dense(64 // 2, kernel_regularizer=l2)
-Dense_2_2 = tf.keras.layers.Dense(64, kernel_regularizer=l2)
+Dense_2_1 = tf.keras.layers.Dense(32 // 2, kernel_regularizer=l2)
+Dense_2_2 = tf.keras.layers.Dense(32, kernel_regularizer=l2)
 
 class InstanceNormalization(tf.keras.layers.Layer):
   #"""Instance Normalization Layer (https://arxiv.org/abs/1607.08022)."""
@@ -41,31 +41,31 @@ class InstanceNormalization(tf.keras.layers.Layer):
         return self.scale * normalized + self.offset
 
 def residual_block(x, kernel_size=3):
-    h = tf.keras.layers.Conv2D(filters=256, kernel_size=kernel_size, strides=1, padding="same", use_bias=False, kernel_regularizer=l2)(x)
+    h = tf.keras.layers.Conv2D(filters=128, kernel_size=kernel_size, strides=1, padding="same", use_bias=False, kernel_regularizer=l2)(x)
     h = InstanceNormalization()(h)
     h = tf.keras.layers.ReLU()(h)
-    return x + InstanceNormalization()(tf.keras.layers.Conv2D(filters=256, kernel_size=kernel_size, strides=1, padding="same", use_bias=False, kernel_regularizer=l2)(h))
+    return x + InstanceNormalization()(tf.keras.layers.Conv2D(filters=128, kernel_size=kernel_size, strides=1, padding="same", use_bias=False, kernel_regularizer=l2)(h))
 
 def F2M_modelV8(input_shape=(256, 256, 3)):
 
     h = inputs = tf.keras.Input(input_shape)
     #######################################################################################################################################
     h = tf.keras.layers.ZeroPadding2D((4,4))(h)
-    h = tf.keras.layers.Conv2D(filters=64, kernel_size=9, strides=1, padding="valid", use_bias=False, kernel_regularizer=l2)(h)
+    h = tf.keras.layers.Conv2D(filters=32, kernel_size=9, strides=1, padding="valid", use_bias=False, kernel_regularizer=l2)(h)
     h = InstanceNormalization()(h)
-    h = tf.keras.layers.ReLU()(h)   # [256, 256, 64]
+    h = tf.keras.layers.ReLU()(h)   # [256, 256, 32]
     EN_SE_1 = h
+
+    h = tf.keras.layers.Conv2D(filters=64, kernel_size=3, strides=2, padding="same", use_bias=False, kernel_regularizer=l2)(h)
+    h = InstanceNormalization()(h)
+    h = tf.keras.layers.ReLU()(h)   # [128, 128, 64]
+    EN_SE_2 = h
 
     h = tf.keras.layers.Conv2D(filters=128, kernel_size=3, strides=2, padding="same", use_bias=False, kernel_regularizer=l2)(h)
     h = InstanceNormalization()(h)
-    h = tf.keras.layers.ReLU()(h)   # [128, 128, 128]
-    EN_SE_2 = h
+    h = tf.keras.layers.ReLU()(h)   # [64, 64, 128]
 
-    h = tf.keras.layers.Conv2D(filters=256, kernel_size=3, strides=2, padding="same", use_bias=False, kernel_regularizer=l2)(h)
-    h = InstanceNormalization()(h)
-    h = tf.keras.layers.ReLU()(h)   # [64, 64, 256]
-
-    for _ in range(3):
+    for _ in range(8):
         h = residual_block(h, 3)
     #######################################################################################################################################
 
@@ -77,24 +77,24 @@ def F2M_modelV8(input_shape=(256, 256, 3)):
     #######################################################################################################################################
     h = Transpose_conv1(h_1)
     h = InstanceNormalization()(h)
-    h = tf.keras.layers.ReLU()(h)   # [128, 128, 128]
+    h = tf.keras.layers.ReLU()(h)   # [128, 128, 64]
 
     DE_SE_2 = tf.keras.layers.GlobalAveragePooling2D()(h)
     DE_SE_2 = Dense_1_1(DE_SE_2)
     DE_SE_2 = tf.keras.layers.ReLU()(DE_SE_2)
     DE_SE_2 = Dense_1_2(DE_SE_2)
-    DE_SE_2 = tf.reshape(tf.nn.sigmoid(DE_SE_2), [-1, 1, 1, 128]) * h
+    DE_SE_2 = tf.reshape(tf.nn.sigmoid(DE_SE_2), [-1, 1, 1, 64]) * h
     h = DE_SE_2 + EN_SE_2
 
     h = Transpose_conv2(h)
     h = InstanceNormalization()(h)
-    h = tf.keras.layers.ReLU()(h)   # [256, 256, 64]
+    h = tf.keras.layers.ReLU()(h)   # [256, 256, 32]
 
     DE_SE_1 = tf.keras.layers.GlobalAveragePooling2D()(h)
     DE_SE_1 = Dense_2_1(DE_SE_1)
     DE_SE_1 = tf.keras.layers.ReLU()(DE_SE_1)
     DE_SE_1 = Dense_2_2(DE_SE_1)
-    DE_SE_1 = tf.reshape(tf.nn.sigmoid(DE_SE_1), [-1, 1, 1, 64]) * h
+    DE_SE_1 = tf.reshape(tf.nn.sigmoid(DE_SE_1), [-1, 1, 1, 32]) * h
     h = DE_SE_1 + EN_SE_1
 
     h = tf.keras.layers.ZeroPadding2D((4,4))(h)
@@ -109,34 +109,34 @@ def F2M_modelV8(input_shape=(256, 256, 3)):
     h = InstanceNormalization()(h)
     h = tf.keras.layers.ReLU()(h)
     h = tf.concat([h, EN_SE_2], -1)
-    h = tf.keras.layers.Conv2D(filters=128, kernel_size=1, strides=1, padding="same",
+    h = tf.keras.layers.Conv2D(filters=64, kernel_size=1, strides=1, padding="same",
                                use_bias=False, kernel_regularizer=l2)(h)
     h = InstanceNormalization()(h)
-    h = tf.keras.layers.ReLU()(h)   # [128, 128, 128]
+    h = tf.keras.layers.ReLU()(h)   # [128, 128, 64]
     add_h_1 = h
 
     DE_SE_2 = tf.keras.layers.GlobalAveragePooling2D()(h)
     DE_SE_2 = Dense_1_1(DE_SE_2)
     DE_SE_2 = tf.keras.layers.ReLU()(DE_SE_2)
     DE_SE_2 = Dense_1_2(DE_SE_2)
-    DE_SE_2 = tf.reshape(tf.nn.sigmoid(DE_SE_2), [-1, 1, 1, 128]) * h
+    DE_SE_2 = tf.reshape(tf.nn.sigmoid(DE_SE_2), [-1, 1, 1, 64]) * h
     h = DE_SE_2 + EN_SE_2
 
     h = Transpose_conv2(h)
     h = InstanceNormalization()(h)
     h = tf.keras.layers.ReLU()(h)
     h = tf.concat([h, EN_SE_1], -1)
-    h = tf.keras.layers.Conv2D(filters=64, kernel_size=1, strides=1, padding="same",
+    h = tf.keras.layers.Conv2D(filters=32, kernel_size=1, strides=1, padding="same",
                                use_bias=False, kernel_regularizer=l2)(h)
     h = InstanceNormalization()(h)
-    h = tf.keras.layers.ReLU()(h)   # [256, 256, 64]
+    h = tf.keras.layers.ReLU()(h)   # [256, 256, 32]
     add_h_2 = h
 
     DE_SE_1 = tf.keras.layers.GlobalAveragePooling2D()(h)
     DE_SE_1 = Dense_2_1(DE_SE_1)
     DE_SE_1 = tf.keras.layers.ReLU()(DE_SE_1)
     DE_SE_1 = Dense_2_2(DE_SE_1)
-    DE_SE_1 = tf.reshape(tf.nn.sigmoid(DE_SE_1), [-1, 1, 1, 64]) * h
+    DE_SE_1 = tf.reshape(tf.nn.sigmoid(DE_SE_1), [-1, 1, 1, 32]) * h
     h = DE_SE_1 + EN_SE_1
 
     h = tf.keras.layers.ZeroPadding2D((4,4))(h)
@@ -149,38 +149,38 @@ def F2M_modelV8(input_shape=(256, 256, 3)):
     h = InstanceNormalization()(h)
     h = tf.keras.layers.ReLU()(h)
     h = tf.concat([h, EN_SE_2], -1)
-    h = tf.keras.layers.Conv2D(filters=128, kernel_size=1, strides=1, padding="same",
+    h = tf.keras.layers.Conv2D(filters=64, kernel_size=1, strides=1, padding="same",
                                use_bias=False, kernel_regularizer=l2)(h)
     h = InstanceNormalization()(h)
-    h = tf.keras.layers.ReLU()(h + add_h_1)   # [128, 128, 128]
+    h = tf.keras.layers.ReLU()(h + add_h_1)   # [128, 128, 64]
 
     DE_SE_2 = tf.keras.layers.GlobalAveragePooling2D()(h)
     DE_SE_2 = Dense_1_1(DE_SE_2)
     DE_SE_2 = tf.keras.layers.ReLU()(DE_SE_2)
     DE_SE_2 = Dense_1_2(DE_SE_2)
-    DE_SE_2 = tf.reshape(tf.nn.sigmoid(DE_SE_2), [-1, 1, 1, 128]) * h
+    DE_SE_2 = tf.reshape(tf.nn.sigmoid(DE_SE_2), [-1, 1, 1, 64]) * h
     h = DE_SE_2 + EN_SE_2
 
     h = Transpose_conv2(h)
     h = InstanceNormalization()(h)
     h = tf.keras.layers.ReLU()(h)
     h = tf.concat([h, EN_SE_1], -1)
-    h = tf.keras.layers.Conv2D(filters=64, kernel_size=1, strides=1, padding="same",
+    h = tf.keras.layers.Conv2D(filters=32, kernel_size=1, strides=1, padding="same",
                                use_bias=False, kernel_regularizer=l2)(h)
     h = InstanceNormalization()(h)
-    h = tf.keras.layers.ReLU()(h + add_h_2)   # [256, 256, 64]
+    h = tf.keras.layers.ReLU()(h + add_h_2)   # [256, 256, 32]
 
     DE_SE_1 = tf.keras.layers.GlobalAveragePooling2D()(h)
     DE_SE_1 = Dense_2_1(DE_SE_1)
     DE_SE_1 = tf.keras.layers.ReLU()(DE_SE_1)
     DE_SE_1 = Dense_2_2(DE_SE_1)
-    DE_SE_1 = tf.reshape(tf.nn.sigmoid(DE_SE_1), [-1, 1, 1, 64]) * h
+    DE_SE_1 = tf.reshape(tf.nn.sigmoid(DE_SE_1), [-1, 1, 1, 32]) * h
     h = DE_SE_1 + EN_SE_1
 
     h = tf.keras.layers.ZeroPadding2D((4,4))(h)
     h_3 = tf.keras.layers.Conv2D(filters=3, kernel_size=9, strides=1, padding="valid")(h)
 
-    h = (tf.nn.softmax(h_1, -1) * h_2) + h_3
+    h = (tf.nn.softmax(h_1, -1) * h_2) + h_3    # 이 부분을 손봐야 할것같음!!!
     h = tf.nn.tanh(h)
     #######################################################################################################################################
 
