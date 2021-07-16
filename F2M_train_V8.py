@@ -36,7 +36,9 @@ FLAGS = easydict.EasyDict({"img_size": 256,
                            
                            "pre_checkpoint_path": "",
                            
-                           "save_checkpoint": ""})
+                           "save_checkpoint": "",
+                           
+                           "sample_images": ""})
 
 g_optim = tf.keras.optimizers.Adam(FLAGS.lr, beta_1=0.5)
 d_optim = tf.keras.optimizers.Adam(FLAGS.lr, beta_1=0.5)
@@ -75,6 +77,10 @@ def cal_loss(A2B_G_model, B2A_G_model, A_discriminator, B_discriminator,
         fake_A = model_out(B2A_G_model, B_batch_images, True)
         fake_B_ = model_out(A2B_G_model, fake_A, True)
 
+        # identification
+        id_fake_B = model_out(A2B_G_model, B_batch_images, True)
+        id_fake_A = model_out(B2A_G_model, A_batch_images, True)
+
         DA_real = model_out(A_discriminator, A_batch_images, True)
         DA_fake = model_out(A_discriminator, fake_A, True)
         DB_real = model_out(B_discriminator, B_batch_images, True)
@@ -111,6 +117,8 @@ def cal_loss(A2B_G_model, B2A_G_model, A_discriminator, B_discriminator,
         loss_buf2 /= FLAGS.batch_size
         ################################################################################################
 
+        id_loss = (tf.reduce_mean(tf.abs(id_fake_B - B_batch_images)) + tf.reduce_mean(tf.abs(id_fake_A - A_batch_images))) * 10.0
+
         Cycle_loss = (tf.reduce_mean(tf.abs(fake_A_ - A_batch_images)) \
             + tf.reduce_mean(tf.abs(fake_B_ - B_batch_images))) * 10.0
         G_gan_loss = tf.reduce_mean((DA_fake - tf.ones_like(DA_fake))**2) \
@@ -119,7 +127,7 @@ def cal_loss(A2B_G_model, B2A_G_model, A_discriminator, B_discriminator,
         Adver_loss = (tf.reduce_mean((DA_real - tf.ones_like(DA_real))**2) + tf.reduce_mean((DA_fake - tf.zeros_like(DA_fake))**2)) / 2. \
             + (tf.reduce_mean((DB_real - tf.ones_like(DB_real))**2) + tf.reduce_mean((DB_fake - tf.zeros_like(DB_fake))**2)) / 2.
 
-        g_loss = Cycle_loss + G_gan_loss + loss_buf + loss_buf2
+        g_loss = Cycle_loss + G_gan_loss + id_loss + loss_buf + loss_buf2
         d_loss = Adver_loss
 
     g_grads = g_tape.gradient(g_loss, A2B_G_model.trainable_variables + B2A_G_model.trainable_variables)
@@ -150,7 +158,7 @@ def main():
     if FLAGS.pre_checkpoint:
         ckpt = tf.train.Checkpoint(A2B_G_model=A2B_G_model, B2A_G_model=B2A_G_model,
                                    A_discriminator=A_discriminator, B_discriminator=B_discriminator,
-                                   optim=optim)
+                                   g_optim=g_optim, d_optim=d_optim)
         ckpt_manager = tf.train.CheckpointManager(ckpt, FLAGS.pre_checkpoint_path, 5)
         if ckpt_manager.latest_checkpoint:
             ckpt.restore(ckpt_manager.latest_checkpoint)
@@ -222,11 +230,33 @@ def main():
                                           A_batch_images, A_batch_labels, B_batch_images, B_batch_labels,
                                           extract_feature_model)
 
-                print(g_loss, d_loss)
+                print("Epoch = {}[{}/{}];\nStep(iteration) = {}\nG_Loss = {}, D_loss".format(epoch,step,train_idx,
+                                                                                             count+1,
+                                                                                             g_loss, d_loss))
+                
+                if count % 100 == 0:
+                    fake_B = model_out(A2B_G_model, A_batch_images, False)
+                    fake_A = model_out(B2A_G_model, B_batch_images, False)
 
-                # 내일 그림으로 그려보자!
+                    plt.imsave(FLAGS.sample_images + "/fake_B_{}.jpg".format(count), fake_B[0] * 0.5 + 0.5)
+                    plt.imsave(FLAGS.sample_images + "/fake_A_{}.jpg".format(count), fake_A[0] * 0.5 + 0.5)
+                    plt.imsave(FLAGS.sample_images + "/real_B_{}.jpg".format(count), B_batch_images[0] * 0.5 + 0.5)
+                    plt.imsave(FLAGS.sample_images + "/real_A_{}.jpg".format(count), A_batch_images[0] * 0.5 + 0.5)
 
-        a = 0
+
+                if count % 1000 == 0:
+                    num_ = int(count // 1000)
+                    model_dir = "%s/%s" % (FLAGS.save_checkpoint, num_)
+                    if not os.path.isdir(model_dir):
+                        print("Make {} folder to store the weight!".format(num_))
+                        os.makedirs(model_dir)
+                    ckpt = tf.train.Checkpoint(A2B_G_model=A2B_G_model, B2A_G_model=B2A_G_model,
+                                               A_discriminator=A_discriminator, B_discriminator=B_discriminator,
+                                               g_optim=g_optim, d_optim=d_optim)
+                    ckpt_dir = model_dir + "/F2M_V8_{}.ckpt".format(count)
+                    ckpt.save(ckpt_dir)
+
+                count += 1
 
 
 if __name__ == "__main__":
